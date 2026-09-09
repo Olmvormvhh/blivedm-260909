@@ -5,9 +5,11 @@ import json
 from typing import *
 
 from . import pb
+from ..utils import as_pb_dict, decode_pb_data
 
 __all__ = (
     'HeartbeatMessage',
+    'OnlineRankCountMessage',
     'DanmakuMessage',
     'GiftMessage',
     'GuardBuyMessage',
@@ -29,6 +31,31 @@ class HeartbeatMessage:
     def from_command(cls, data: dict):
         return cls(
             popularity=data['popularity'],
+        )
+
+
+@dataclasses.dataclass
+class OnlineRankCountMessage:
+    """
+    高能用户榜在线人数
+    """
+
+    count: int = 0
+    """高能榜人数"""
+    count_text: str = ''
+    """高能榜人数文本"""
+    online_count: int = 0
+    """直播间观看人数"""
+    online_count_text: str = ''
+    """直播间观看人数文本"""
+
+    @classmethod
+    def from_command(cls, data: dict):
+        return cls(
+            count=data.get('count', 0),
+            count_text=data.get('count_text', ''),
+            online_count=data.get('online_count', data.get('count', 0)),
+            online_count_text=data.get('online_count_text', ''),
         )
 
 
@@ -284,13 +311,13 @@ class GiftMessage:
     action: str = ''
     """目前遇到的有'喂食'、'赠送'"""
     price: int = 0
-    """礼物单价瓜子数，送盲盒则是爆出礼物的单价"""
+    """礼物单价瓜子数"""
     rnd: str = ''
     """随机数，可能是去重用的。有时是时间戳+去重ID，有时是UUID"""
     coin_type: str = ''
     """瓜子类型，'silver'或'gold'，1000金瓜子 = 1元"""
     total_coin: int = 0
-    """实付总价瓜子数，普通礼物 = 折后单价 x num；盲盒 = 盲盒单价 x num"""
+    """总瓜子数"""
     tid: str = ''
     """可能是事务ID，有时和rnd相同"""
     medal_level: int = 0
@@ -301,13 +328,16 @@ class GiftMessage:
     """勋章房间ID，未登录时是0"""
     medal_ruid: int = 0
     """勋章主播ID"""
-    blind_gift_name: str = ''
-    """盲盒名（如'心动盲盒'）"""
-    blind_price: int = 0
-    """盲盒单价瓜子数"""
 
     @classmethod
     def from_command(cls, data: dict):
+        pb_data = data.get('pb')
+        if pb_data is not None:
+            return cls.from_pb_command(data, pb_data)
+        return cls.from_legacy_command(data)
+
+    @classmethod
+    def from_legacy_command(cls, data: dict):
         medal_info = data.get('medal_info', None)
         if medal_info is not None:
             medal_level = medal_info['medal_level']
@@ -319,14 +349,6 @@ class GiftMessage:
             medal_name = ''
             medal_room_id = 0
             medal_ruid = 0
-
-        blind_gift = data.get('blind_gift', None)
-        if blind_gift is not None:
-            blind_gift_name = blind_gift['original_gift_name']
-            blind_price = blind_gift['original_gift_price']
-        else:
-            blind_gift_name = ''
-            blind_price = 0
 
         return cls(
             gift_name=data['giftName'],
@@ -349,43 +371,39 @@ class GiftMessage:
             medal_name=medal_name,
             medal_room_id=medal_room_id,
             medal_ruid=medal_ruid,
-            blind_gift_name=blind_gift_name,
-            blind_price=blind_price,
         )
 
     @classmethod
-    def batch_from_command_v2(cls, data: dict) -> List['GiftMessage']:
-        proto = pb.SendGiftBroadcast.loads(base64.b64decode(data['pb']))
-        medal_info = proto.medal_info
-        blind_gift = proto.blind_gift
+    def from_pb_command(cls, data: dict, pb_data: str):
+        decoded = decode_pb_data(pb_data)
+        gift_info = as_pb_dict(decoded.get('10'))
+        medal_info = as_pb_dict(decoded.get('8'))
+        receiver_medal = as_pb_dict(decoded.get('15'))
+        receiver_medal_info = as_pb_dict(receiver_medal.get('3'))
+        gift_img = as_pb_dict(gift_info.get('35'))
 
-        messages = []
-        for gift in proto.gift_list:
-            messages.append(cls(
-                gift_name=gift.gift_name,
-                num=gift.num,
-                uname=proto.uname,
-                face=proto.face,
-                guard_level=proto.guard_level,
-                uid=proto.uid,
-                timestamp=gift.timestamp,
-                gift_id=gift.gift_id,
-                gift_type=gift.gift_type,
-                gift_img_basic=gift.gift_info.img_basic,
-                action=gift.action,
-                price=gift.price,
-                rnd=gift.rnd,
-                coin_type=gift.coin_type,
-                total_coin=gift.total_coin,
-                tid=gift.tid,
-                medal_level=medal_info.medal_level,
-                medal_name=medal_info.medal_name,
-                medal_room_id=medal_info.anchor_roomid,
-                medal_ruid=medal_info.target_id,
-                blind_gift_name=blind_gift.original_gift_name,
-                blind_price=blind_gift.original_gift_price,
-            ))
-        return messages
+        return cls(
+            gift_name=gift_info.get('2', ''),
+            num=gift_info.get('15', gift_info.get('3', 0)),
+            uname=decoded.get('2', ''),
+            face=decoded.get('3', ''),
+            guard_level=0,
+            uid=decoded.get('1', 0),
+            timestamp=gift_info.get('10', 0),
+            gift_id=gift_info.get('1', 0),
+            gift_type=gift_info.get('13', 0),
+            gift_img_basic=gift_img.get('1', ''),
+            action=gift_info.get('18', ''),
+            price=gift_info.get('14', gift_info.get('5', 0)),
+            rnd=str(gift_info.get('9', '')),
+            coin_type=gift_info.get('8', ''),
+            total_coin=gift_info.get('14', 0) * gift_info.get('15', gift_info.get('3', 1)),
+            tid=str(gift_info.get('12', '')),
+            medal_level=medal_info.get('5', 0),
+            medal_name=medal_info.get('6', ''),
+            medal_room_id=receiver_medal_info.get('4', 0),
+            medal_ruid=receiver_medal.get('2', 0),
+        )
 
 
 @dataclasses.dataclass
