@@ -359,13 +359,13 @@ class RoomHandler(BaseHandler):
     white  = "\033[0m"
 
     def __init__(self, show_entering=False):
-        self.count: Dict[int, int] = {}  # uid -> 出现次数
+        self.count: Dict[Hashable, int] = {}  # 发言者标识 -> 出现次数
         self.last_print_time = 0  # 上次打印时间
         self.print_time_interval = 0.1  # 相邻弹幕的打印间隔时间
         self.show_entering = show_entering
         self.online_count: Optional[int] = None  # 最新直播间观看人数
         self.last_online_count_print_time = 0.0  # 上次把人数挂到弹幕上的时间
-        self.online_count_print_interval = 600  # 人数展示间隔（秒）
+        self.online_count_print_interval = 300  # 人数展示间隔（秒）
 
     def _print_with_delay(self):
         """带延迟的打印"""
@@ -391,10 +391,19 @@ class RoomHandler(BaseHandler):
         self.last_online_count_print_time = now
         return f" {self.gray}({self.online_count} online){self.white}"
 
-    def _print_danmaku(self, timeline: str, level, uid: int, uname: str, text: str, suffix: str = ''):
-        self.count[uid] = self.count.get(uid, 0) + 1
+    def _speaker_key(self, uid: int = 0, uname: str = '', uid_crc32: str = '') -> Hashable:
+        """未登录时服务端会把 uid 置 0，改用 crc32 / 用户名区分发言者。"""
+        if uid:
+            return uid
+        if uid_crc32:
+            return f"crc:{uid_crc32}"
+        return uname or 0
+
+    def _print_danmaku(self, timeline: str, level, uid: int, uname: str, text: str, suffix: str = '', uid_crc32: str = ''):
+        key = self._speaker_key(uid, uname, uid_crc32)
+        self.count[key] = self.count.get(key, 0) + 1
         self._print_with_delay()
-        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[uid]}〉{text}{suffix}")
+        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[key]}〉{text}{suffix}")
 
     async def load_history(self, session: aiohttp.ClientSession, room_id: int):
         """拉取并打印进房前的历史弹幕，与实时弹幕共用 uid 计数和打印延迟"""
@@ -453,7 +462,10 @@ class RoomHandler(BaseHandler):
             level = "GM" if message.admin else message.medal_level if message.medal_level else ''
             text = self._format_danmaku_text(message.msg)
             suffix = self._consume_online_count_suffix()
-            self._print_danmaku(timeline, level, message.uid, message.uname, text, suffix)
+            self._print_danmaku(
+                timeline, level, message.uid, message.uname, text, suffix,
+                uid_crc32=message.uid_crc32,
+            )
 
     def _on_super_chat(self, client: ws_base.WebSocketClientBase, message: web_models.SuperChatMessage):
         """SC弹幕"""
@@ -463,9 +475,10 @@ class RoomHandler(BaseHandler):
         uname = message.uname
         text = message.message
         price = message.price
-        self.count[uid] = self.count.get(uid, 0) + 1  # 统计 uid 出现次数
+        key = self._speaker_key(uid, uname)
+        self.count[key] = self.count.get(key, 0) + 1
         self._print_with_delay()
-        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[uid]}〉{self.white}{text} {self.red}￥{price}{self.white}")
+        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[key]}〉{self.white}{text} {self.red}￥{price}{self.white}")
 
     def _on_gift(self, client: ws_base.WebSocketClientBase, message: web_models.GiftMessage):
         """礼物"""
@@ -475,9 +488,10 @@ class RoomHandler(BaseHandler):
         uname = message.uname
         text = f"{message.gift_name} ×{message.num}"
         price = message.price / 1000 * message.num
-        self.count[uid] = self.count.get(uid, 0) + 1  # 统计 uid 出现次数
+        key = self._speaker_key(uid, uname)
+        self.count[key] = self.count.get(key, 0) + 1
         self._print_with_delay()
-        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[uid]}〉{self.gray}{text} {self.red}￥{price:.1f}{self.white}")
+        print(f"{self.gray}{timeline} {self.cyan}{level:>2} {uname}{self.green}|{self.count[key]}〉{self.gray}{text} {self.red}￥{price:.1f}{self.white}")
 
     def _on_user_toast_v2(self, client: ws_base.WebSocketClientBase, message: web_models.UserToastV2Message):
         """上舰"""
@@ -489,6 +503,7 @@ class RoomHandler(BaseHandler):
             uname = message.username
             text = f"{re.search(r'(舰长|提督|总督)', message.toast_msg).group()} ×{message.num}{message.unit}"
             price = message.price / 1000
-            self.count[uid] = self.count.get(uid, 0) + 1
+            key = self._speaker_key(uid, uname)
+            self.count[key] = self.count.get(key, 0) + 1
             self._print_with_delay()
-            print(f"{self.gray}{timeline} {self.purple}{level:>2} {self.cyan}{uname}{self.green}|{self.count[uid]}〉{self.white}{text} {self.red}￥{price}{self.white}")
+            print(f"{self.gray}{timeline} {self.purple}{level:>2} {self.cyan}{uname}{self.green}|{self.count[key]}〉{self.white}{text} {self.red}￥{price}{self.white}")

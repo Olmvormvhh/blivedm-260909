@@ -59,37 +59,57 @@ def _merge_field(fields: Dict[str, Any], key: str, value: PbValue):
         fields[key] = [existing, value]
 
 
+def _decode_length_delimited(raw: bytes) -> PbValue:
+    """length-delimited：可打印 UTF-8 当字符串；否则尝试嵌套 protobuf；失败则丢弃二进制。"""
+    if _is_printable_utf8(raw):
+        return raw.decode('utf-8')
+    if not raw:
+        return ''
+    try:
+        return _protobuf_to_dict(raw)
+    except (ValueError, struct.error):
+        return {}
+
+
 def _protobuf_to_dict(data: bytes) -> Dict[str, Any]:
+    """
+    无 schema 的尽力解码。SEND_GIFT_V2 等消息里常混有 packed / bytes 字段，
+    不能当嵌套 protobuf 读；截断或非法 wire type 时停止当前层，保留已解析字段。
+    """
     fields: Dict[str, Any] = {}
     index = 0
-    while index < len(data):
-        key, index = _read_varint(data, index)
-        field_number = key >> 3
-        wire_type = key & 0x07
-        field_key = str(field_number)
+    data_len = len(data)
+    while index < data_len:
+        try:
+            key, index = _read_varint(data, index)
+            field_number = key >> 3
+            wire_type = key & 0x07
+            field_key = str(field_number)
 
-        if wire_type == 0:
-            value, index = _read_varint(data, index)
-            _merge_field(fields, field_key, value)
-        elif wire_type == 1:
-            value = struct.unpack('<Q', data[index:index + 8])[0]
-            index += 8
-            _merge_field(fields, field_key, value)
-        elif wire_type == 2:
-            length, index = _read_varint(data, index)
-            raw = data[index:index + length]
-            index += length
-            if _is_printable_utf8(raw):
-                value: PbValue = raw.decode('utf-8')
+            if wire_type == 0:
+                value, index = _read_varint(data, index)
+            elif wire_type == 1:
+                if index + 8 > data_len:
+                    break
+                value = struct.unpack_from('<Q', data, index)[0]
+                index += 8
+            elif wire_type == 2:
+                length, index = _read_varint(data, index)
+                if index + length > data_len:
+                    break
+                raw = data[index:index + length]
+                index += length
+                value = _decode_length_delimited(raw)
+            elif wire_type == 5:
+                if index + 4 > data_len:
+                    break
+                value = struct.unpack_from('<I', data, index)[0]
+                index += 4
             else:
-                value = _protobuf_to_dict(raw)
-            _merge_field(fields, field_key, value)
-        elif wire_type == 5:
-            value = struct.unpack('<I', data[index:index + 4])[0]
-            index += 4
-            _merge_field(fields, field_key, value)
-        else:
-            raise ValueError(f'unsupported protobuf wire type: {wire_type}')
+                break
+        except (ValueError, struct.error):
+            break
+        _merge_field(fields, field_key, value)
     return fields
 
 
