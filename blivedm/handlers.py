@@ -56,7 +56,6 @@ _DEFAULT_UNKNOWN_CMDS = {
     "LIKE_GUIDE_USER",
     "LIKE_INFO_V3_CLICK",
     "LIKE_INFO_V3_UPDATE",
-    "LIVE",
     "LIVE_ANI_RES_UPDATE",
     "LIVE_INTERACTIVE_GAME",
     "LIVE_INTERACT_GAME_STATE_CHANGE",
@@ -98,7 +97,6 @@ _DEFAULT_UNKNOWN_CMDS = {
     "POPULARITY_RED_POCKET_V2_WINNER_LIST",
     "POPULARITY_RED_POCKET_WINNER_LIST",
     "POPULAR_RANK_CHANGED",
-    "PREPARING",
     "RANK_CHANGED",
     "RANK_CHANGED_V2",
     "RANK_REM",
@@ -234,6 +232,9 @@ class BaseHandler(HandlerInterface):
         'INTERACT_WORD_V2': _make_msg_callback('_on_interact_word_v2', web_models.InteractWordV2Message),
         # 高能榜 / 直播间观看人数（持续下发，RoomHandler 按间隔挂到普通弹幕上）
         'ONLINE_RANK_COUNT': _make_msg_callback('_on_online_rank_count', web_models.OnlineRankCountMessage),
+        # 开播 / 下播（web 端房间事件，payload 不稳定，把原始 command 交给上层）
+        'LIVE': lambda self, client, command: self._on_live(client, command),
+        'PREPARING': lambda self, client, command: self._on_preparing(client, command),
 
         #
         # 开放平台消息
@@ -306,6 +307,12 @@ class BaseHandler(HandlerInterface):
 
     def _on_online_rank_count(self, client: ws_base.WebSocketClientBase, message: web_models.OnlineRankCountMessage):
         """高能榜 / 直播间观看人数"""
+
+    def _on_live(self, client: ws_base.WebSocketClientBase, command: dict):
+        """直播间开播"""
+
+    def _on_preparing(self, client: ws_base.WebSocketClientBase, command: dict):
+        """直播间下播 / 准备中"""
 
     #
     # 开放平台消息
